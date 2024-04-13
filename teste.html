@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>
+        FocoEnsino   Joystick
+    </title>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+
+    <style>
+        html, body {width: 100%; height: 100%; padding: 0; margin: 0; }
+
+        body {
+            overflow: hidden;
+            -moz-user-select: none; 
+            -webkit-user-select: none;
+            -ms-user-select:none; 
+            user-select:none;
+            -o-user-select:none;
+        }
+      
+        .container {
+            height: 26px;
+            width: 50px;
+            position: relative;
+        }
+        .container * {
+            position: absolute;
+        }
+
+        .battery {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            height: 20px;
+            width: 40px;
+            border: 2px solid #F1F1F1;
+            border-radius: 5px;
+            padding: 1px;
+        }
+        .battery::before {
+            content: '';
+            position: absolute;
+            height: 13px;
+            width: 3px;
+            background: #F1F1F1;
+            left: 44px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-radius: 0 3px 3px 0;
+        }
+        .part {
+            background: #0F0;
+            top: 1px;
+            left: 1px;
+            bottom: 1px;
+            /*                animation: 7s animate 1s infinite;*/
+            border-radius: 3px;
+        }
+
+        @keyframes animate {
+            0% {
+                width: 0%;
+                background: #F00;
+            }
+            50% {
+                width: 48%;
+                background:orange;
+            }
+            100% {
+                width: 95%;
+                background: #0F0;
+            }
+        }
+    </style>
+</head>
+
+<body style="height: 100%;  font-family: 'Gill Sans', 'Gill Sans MT', Calibri, 'Trebuchet MS', sans-serif ;">
+
+    <div style="line-height: 26px; background-color: rgb(55, 28, 177); padding: 10px; padding-bottom: 0px;">
+        <div class="container" style="float: right; margin-right: 10px;">
+            <div class="battery">
+                <div id="lbat" class="part"></div>
+            </div>
+        </div>
+
+        <div style="float: right; color: white; font-size: 18px; line-height: 26px; margin-right: 5px;">
+            <span id="vbat">0</span> V
+        </div>
+
+        <div style="width: 100%; border: 0px solid red; text-align: center;">
+
+
+            <h1 style="color:white; padding:1rem">Foco Ensino</h1>
+            
+        </div>
+
+    </div>
+
+    <div style="color:rgb(128, 128, 128); font-size: medium; text-align: left; width: 300px; border: 0px solid red; position: absolute; top: 0px; left: 0px; visibility: hidden;">
+        DEBUG: Vel: <span id="speed">0</span>% | 
+        Ang: <span id="angle">0</span> | 
+        Botão: <span id="button">0</span>
+    </div>
+
+    <div style="display: table; width:100%; height: calc(100% - 80px); border: 0px solid green;">
+        <div style="display: table-cell; vertical-align: middle;">
+            <div style="display: flex; align-items: center; justify-content: space-evenly; align-content: center; flex-direction: row; flex-wrap: wrap;">
+                <canvas id="canvas_joystick" style="border: 0px solid red;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var connection = new WebSocket(`ws://${window.location.hostname}/ws`);
+        connection.onopen = function () {
+            console.log('Connection opened to ' + window.location.hostname);
+        };
+        connection.onerror = function (error) {
+            console.log('WebSocket Error ' + error);
+            alert('WebSocket Error #' + error);
+        };
+        connection.onmessage = function (e) {
+            console.log('Server: ' + e.data);
+            const data = JSON.parse(e.data);
+            if (data["vbat"]){
+                document.getElementById("vbat").innerText = (data["vbat"] / 1000).toFixed(1);
+                var lbat = (data["vbat"] * 100 / 9000).toFixed(0);
+                if(lbat > 100){ lbat = 100; }
+                if(lbat < 2){ lbat = 2; }
+                console.log("lbat=" + lbat); // debug
+                document.getElementById("lbat").style.width = lbat + '%';
+                if (lbat < 20){
+                    document.getElementById("lbat").style.backgroundColor = "#F00";
+                } else if (lbat < 70){
+                    document.getElementById("lbat").style.backgroundColor = "orange";
+                } else {
+                    document.getElementById("lbat").style.backgroundColor = "#0F0";
+                }
+            }
+        };
+
+        function send_joystick(speed, angle){
+            var data = {"velocidade":speed, "angulo":angle};
+            data = JSON.stringify(data);
+            console.log('Send joystick: ', data);
+            connection.send(data);
+        }
+    </script>
+
+    <script>
+        var canvas_joystick, ctx_joystick;
+        var ctx_button;
+
+        // setup the controls for the page
+        window.addEventListener('load', () => {
+            canvas_joystick = document.getElementById('canvas_joystick');
+            ctx_joystick = canvas_joystick.getContext('2d');
+
+            resize();
+
+            canvas_joystick.addEventListener('mousedown', startDrawing);
+            canvas_joystick.addEventListener('mouseup', stopDrawing);
+            canvas_joystick.addEventListener('mousemove', Draw);
+            canvas_joystick.addEventListener('touchstart', startDrawing);
+            canvas_joystick.addEventListener('touchend', stopDrawing);
+            canvas_joystick.addEventListener('touchcancel', stopDrawing);
+            canvas_joystick.addEventListener('touchmove', Draw);
+            window.addEventListener('resize', resize);
+            document.getElementById("speed").innerText = 0;
+            document.getElementById("angle").innerText = 0;
+            document.getElementById("button").innerText = 0;
+        });
+
+        var width, height, radius, button_size;
+        let origin_joystick = { x: 0, y: 0};
+        let origin_button = { x: 0, y: 0};
+        const width_to_radius_ratio = 0.04;
+        const width_to_size_ratio = 0.15;
+        const radius_factor = 7;
+            
+        function resize() {
+            if(window.innerWidth > window.innerHeight){
+                width = window.innerHeight; // half the window for two canvases
+            } else {
+                width = window.innerWidth;
+            }
+            radius = width_to_radius_ratio * width;
+            button_size = width_to_size_ratio * width;
+            height = radius * radius_factor * 2 + 100; // use the diameter
+
+            // configure and draw the joystick canvas
+            ctx_joystick.canvas.width = width;
+            ctx_joystick.canvas.height = height;
+            origin_joystick.x = width / 2;
+            origin_joystick.y = height / 2;
+            joystick(origin_joystick.x, origin_joystick.y);
+            
+        }
+
+        // Draw the background/outer circle of the joystick
+        function joystick_background() {
+            // clear the canvas
+            ctx_joystick.clearRect(0, 0, canvas_joystick.width, canvas_joystick.height);
+            // draw the background circle
+            ctx_joystick.beginPath();
+            ctx_joystick.arc(origin_joystick.x, origin_joystick.y, radius * radius_factor, 0, Math.PI * 2, true);
+            ctx_joystick.fillStyle = '#ECE5E5';
+            ctx_joystick.fill();
+        }
+
+        // Draw the main circle of the joystick
+        function joystick(x, y) {
+            // draw the background
+            joystick_background();
+            // draw the joystick circle
+            ctx_joystick.beginPath();
+            ctx_joystick.arc(x, y, radius*3, 0, Math.PI * 2, true);
+            ctx_joystick.fillStyle = 'lightgray';
+            ctx_joystick.fill();
+            ctx_joystick.strokeStyle = 'lightgray';
+            ctx_joystick.lineWidth = 2;
+            ctx_joystick.stroke();
+        }
+
+        let coord = { x: 0, y: 0 };
+        let paint = false;
+        var movimento = 0;
+
+        // Get the position of the mouse/touch press (joystick canvas)
+        function getPosition_joystick(event) {
+            var mouse_x = event.clientX || event.touches[0].clientX || event.touches[1].clientX;
+            var mouse_y = event.clientY || event.touches[0].clientY || event.touches[1].clientY;
+            coord.x = mouse_x - canvas_joystick.offsetLeft;
+            coord.y = mouse_y - canvas_joystick.offsetTop;
+        }
+
+        // Check if the mouse/touch was pressed inside the background/outer circle of the joystick
+        function in_circle() {
+            var current_radius = Math.sqrt(Math.pow(coord.x - origin_joystick.x, 2) + Math.pow(coord.y - origin_joystick.y, 2));
+            if ((radius * radius_factor) >= current_radius) { // consider the outer circle
+                console.log("INSIDE circle");
+                return true;
+            } else {
+                console.log("OUTSIDE circle");
+                return false;
+            }
+        }
+
+        // Handler: on press for the joystick canvas
+        function startDrawing(event) {
+            paint = true;
+            getPosition_joystick(event);
+            if (in_circle()) {
+                // draw the new graphics
+                joystick(coord.x, coord.y);
+                Draw(event);
+            }
+        }
+
+        // Handler: on release for the joystick canvas
+        function stopDrawing() {
+            paint = false; // reset
+
+            // update to the default graphics
+            joystick(origin_joystick.x, origin_joystick.y);
+            document.getElementById("speed").innerText = 0;
+            document.getElementById("angle").innerText = 0;
+            // update the WebSocket client
+            if (movimento == 1) {
+                send_joystick(0, 0);
+                movimento = 0;
+            }
+        }
+
+        // Semi-handler: update the drawing of the joystick canvas
+        function Draw(event) {
+            if (paint) {
+                // update the position
+                getPosition_joystick(event);
+                var angle_in_degrees, x, y, speed;
+                // calculate the angle
+                var angle = Math.atan2((coord.y - origin_joystick.y), (coord.x - origin_joystick.x));
+                if (in_circle()) {
+                    x = coord.x - radius / 2; // correction to center on the tip of the mouse, by why? (Thought for another time.)
+                    y = coord.y - radius / 2; // correction to center on the tip of the mouse, by why? (Thought for another time.)
+                } else {
+                    x = radius * radius_factor * Math.cos(angle) + origin_joystick.x; // consider the outer circle
+                    y = radius * radius_factor * Math.sin(angle) + origin_joystick.y; // consider the outer circle
+                }
+
+                // calculate the speed (radial coordinate) in percentage [0;100]
+                var speed = Math.round(100 * Math.sqrt(Math.pow(x - origin_joystick.x, 2) + Math.pow(y - origin_joystick.y, 2)) / (radius * radius_factor)); // consider the outer circle
+                if (speed > 100){
+                    speed = 100; // limit
+                }
+
+                // convert the angle to degrees [0;360]
+                if (Math.sign(angle) == - 1) {
+                    angle_in_degrees = Math.round( - angle * 180 / Math.PI);
+                }
+                else {
+                    angle_in_degrees = Math.round(360 - angle * 180 / Math.PI);
+                }
+
+                // update the elements
+                joystick(x, y);
+                document.getElementById("speed").innerText = speed;
+                document.getElementById("angle").innerText = angle_in_degrees;
+                // send the data
+                send_joystick(speed, angle_in_degrees);
+                movimento = 1;
+            }
+        }
+    </script>
+
+</body>
+</html>
